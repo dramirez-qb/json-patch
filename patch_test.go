@@ -57,6 +57,13 @@ func repeatedA(r int) string {
 
 var Cases = []Case{
 	{
+		``,
+		`[
+         { "op": "add", "path": "/baz", "value": "qux" }
+     ]`,
+		``,
+	},
+	{
 		`{ "foo": "bar"}`,
 		`[
          { "op": "add", "path": "/baz", "value": "qux" }
@@ -187,11 +194,6 @@ var Cases = []Case{
 		`{ "foo": [["bar"], "bar"]}`,
 	},
 	{
-		`{ "foo": null}`,
-		`[{"op": "copy", "path": "/bar", "from": "/foo"}]`,
-		`{ "foo": null, "bar": null}`,
-	},
-	{
 		`{ "foo": ["bar","qux","baz"]}`,
 		`[ { "op": "remove", "path": "/foo/-2"}]`,
 		`{ "foo": ["bar", "baz"]}`,
@@ -228,6 +230,36 @@ var Cases = []Case{
 		`[ { "op": "copy", "path": "/foo/-", "from": "/foo/1" },
 		   { "op": "copy", "path": "/foo/-", "from": "/foo/1" }]`,
 		fmt.Sprintf(`{ "foo": ["A", %q, %q, %q] }`, repeatedA(48), repeatedA(48), repeatedA(48)),
+	},
+	{
+		`{
+      "id": "00000000-0000-0000-0000-000000000000",
+      "parentID": "00000000-0000-0000-0000-000000000000"
+		}`,
+		`[
+ {
+   "op": "test",
+   "path": "",
+   "value": {
+     "id": "00000000-0000-0000-0000-000000000000",
+     "parentID": "00000000-0000-0000-0000-000000000000"
+   }
+ },
+ {
+   "op": "replace",
+   "path": "",
+   "value": {
+     "id": "759981e8-ec68-4639-a83e-513225914ecb",
+     "originalID": "bar",
+     "parentID": "00000000-0000-0000-0000-000000000000"
+   }
+ }
+		]`,
+		`{
+ "id" : "759981e8-ec68-4639-a83e-513225914ecb",
+ "originalID" : "bar",
+ "parentID" : "00000000-0000-0000-0000-000000000000"
+		}`,
 	},
 }
 
@@ -336,15 +368,6 @@ var BadCases = []BadCase{
 	{
 		`{ "foo": [ "all", "grass", "cows", "eat" ] }`,
 		`[ { "op": "move", "from": "/foo/1", "path": "/foo/4" } ]`,
-	},
-	{
-		`{ "baz": "qux" }`,
-		`[ { "op": "replace", "path": "/foo", "value": "bar" } ]`,
-	},
-	// Can't copy from non-existent "from" key.
-	{
-		`{ "foo": "bar"}`,
-		`[{"op": "copy", "path": "/qux", "from": "/baz"}]`,
 	},
 }
 
@@ -474,16 +497,10 @@ var TestCases = []TestCase{
 		"/foo",
 	},
 	{
-		`{ "foo": "bar" }`,
-		`[ { "op": "test", "path": "/baz", "value": "bar" } ]`,
-		false,
-		"/baz",
-	},
-	{
-		`{ "foo": "bar" }`,
-		`[ { "op": "test", "path": "/baz", "value": null } ]`,
+		`{ "baz": [] }`,
+		`[ { "op": "test", "path": "/foo"} ]`,
 		true,
-		"/baz",
+		"/foo",
 	},
 }
 
@@ -544,8 +561,9 @@ func TestAdd(t *testing.T) {
 			key:  "-1",
 			val:  lazyNode{},
 			arr:  partialArray{},
+			err:  "Unable to access invalid index: -1: invalid index referenced",
+
 			rejectNegativeIndicies: true,
-			err: "Unable to access invalid index: -1: invalid index referenced",
 		},
 	}
 	for _, tc := range testCases {

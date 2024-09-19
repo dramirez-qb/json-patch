@@ -2,15 +2,15 @@ package jsonpatch
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 )
 
-func mergePatch(doc, patch string) string {
+func mergePatch(t *testing.T, doc, patch string) string {
+	t.Helper()
 	out, err := MergePatch([]byte(doc), []byte(patch))
 
 	if err != nil {
-		panic(err)
+		t.Errorf(fmt.Sprintf("%s: %s", err, patch))
 	}
 
 	return string(out)
@@ -20,7 +20,7 @@ func TestMergePatchReplaceKey(t *testing.T) {
 	doc := `{ "title": "hello" }`
 	pat := `{ "title": "goodbye" }`
 
-	res := mergePatch(doc, pat)
+	res := mergePatch(t, doc, pat)
 
 	if !compareJSON(pat, res) {
 		t.Fatalf("Key was not replaced")
@@ -31,7 +31,7 @@ func TestMergePatchIgnoresOtherValues(t *testing.T) {
 	doc := `{ "title": "hello", "age": 18 }`
 	pat := `{ "title": "goodbye" }`
 
-	res := mergePatch(doc, pat)
+	res := mergePatch(t, doc, pat)
 
 	exp := `{ "title": "goodbye", "age": 18 }`
 
@@ -44,7 +44,7 @@ func TestMergePatchNilDoc(t *testing.T) {
 	doc := `{ "title": null }`
 	pat := `{ "title": {"foo": "bar"} }`
 
-	res := mergePatch(doc, pat)
+	res := mergePatch(t, doc, pat)
 
 	exp := `{ "title": {"foo": "bar"} }`
 
@@ -53,16 +53,42 @@ func TestMergePatchNilDoc(t *testing.T) {
 	}
 }
 
+type arrayCases struct {
+	original, patch, res string
+}
+
+func TestMergePatchNilArray(t *testing.T) {
+
+	cases := []arrayCases{
+		{`{"a": [ {"b":"c"} ] }`, `{"a": [1]}`, `{"a": [1]}`},
+		{`{"a": [ {"b":"c"} ] }`, `{"a": [null, 1]}`, `{"a": [null, 1]}`},
+		{`["a",null]`, `[null]`, `[null]`},
+		{`["a"]`, `[null]`, `[null]`},
+		{`["a", "b"]`, `["a", null]`, `["a", null]`},
+		{`{"a":["b"]}`, `{"a": ["b", null]}`, `{"a":["b", null]}`},
+		{`{"a":[]}`, `{"a": ["b", null, null, "a"]}`, `{"a":["b", null, null, "a"]}`},
+	}
+
+	for _, c := range cases {
+		t.Log(c.original)
+		act := mergePatch(t, c.original, c.patch)
+
+		if !compareJSON(c.res, act) {
+			t.Errorf("null values not preserved in array")
+		}
+	}
+}
+
 func TestMergePatchRecursesIntoObjects(t *testing.T) {
 	doc := `{ "person": { "title": "hello", "age": 18 } }`
 	pat := `{ "person": { "title": "goodbye" } }`
 
-	res := mergePatch(doc, pat)
+	res := mergePatch(t, doc, pat)
 
 	exp := `{ "person": { "title": "goodbye", "age": 18 } }`
 
 	if !compareJSON(exp, res) {
-		t.Fatalf("Key was not replaced")
+		t.Fatalf("Key was not replaced: %s", res)
 	}
 }
 
@@ -86,7 +112,7 @@ func TestMergePatchReplacesNonObjectsWholesale(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		act := mergePatch(c.doc, c.pat)
+		act := mergePatch(t, c.doc, c.pat)
 
 		if !compareJSON(c.res, act) {
 			t.Errorf("whole object replacement failed")
@@ -141,8 +167,8 @@ var rfcTests = []struct {
 	{target: `{"a":[{"b":"c"}]}`, patch: `{"a":[1]}`, expected: `{"a":[1]}`},
 	{target: `["a","b"]`, patch: `["c","d"]`, expected: `["c","d"]`},
 	{target: `{"a":"b"}`, patch: `["c"]`, expected: `["c"]`},
-	// {target: `{"a":"foo"}`, patch: `null`, expected: `null`},
-	// {target: `{"a":"foo"}`, patch: `"bar"`, expected: `"bar"`},
+	{target: `{"a":"foo"}`, patch: `null`, expected: `null`},
+	{target: `{"a":"foo"}`, patch: `"bar"`, expected: `"bar"`},
 	{target: `{"e":null}`, patch: `{"a":1}`, expected: `{"a":1,"e":null}`},
 	{target: `[1,2]`, patch: `{"a":"b","c":null}`, expected: `{"a":"b"}`},
 	{target: `{}`, patch: `{"a":{"bb":{"ccc":null}}}`, expected: `{"a":{"bb":{}}}`},
@@ -150,39 +176,12 @@ var rfcTests = []struct {
 
 func TestMergePatchRFCCases(t *testing.T) {
 	for i, c := range rfcTests {
-		out := mergePatch(c.target, c.patch)
+		out := mergePatch(t, c.target, c.patch)
 
 		if !compareJSON(out, c.expected) {
 			t.Errorf("case[%d], patch '%s' did not apply properly to '%s'. expected:\n'%s'\ngot:\n'%s'", i, c.patch, c.target, c.expected, out)
 		}
 	}
-}
-
-var rfcFailTests = `
-     {"a":"foo"}  |   null
-     {"a":"foo"}  |   "bar"
-`
-
-func TestMergePatchFailRFCCases(t *testing.T) {
-	tests := strings.Split(rfcFailTests, "\n")
-
-	for _, c := range tests {
-		if strings.TrimSpace(c) == "" {
-			continue
-		}
-
-		parts := strings.SplitN(c, "|", 2)
-
-		doc := strings.TrimSpace(parts[0])
-		pat := strings.TrimSpace(parts[1])
-
-		out, err := MergePatch([]byte(doc), []byte(pat))
-
-		if err != errBadJSONPatch {
-			t.Errorf("error not returned properly: %s, %s", err, string(out))
-		}
-	}
-
 }
 
 func TestResembleJSONArray(t *testing.T) {
@@ -454,11 +453,78 @@ func createNestedMap(m map[string]interface{}, depth int, objectCount *int) {
 	if depth == 0 {
 		return
 	}
-	for i := 0; i< 2;i++ {
+	for i := 0; i < 2; i++ {
 		nested := map[string]interface{}{}
 		*objectCount += 1
 		createNestedMap(nested, depth-1, objectCount)
 		m[fmt.Sprintf("key-%v", i)] = nested
+	}
+}
+
+func TestMatchesValue(t *testing.T) {
+	testcases := []struct {
+		name string
+		a    interface{}
+		b    interface{}
+		want bool
+	}{
+		{
+			name: "map empty",
+			a:    map[string]interface{}{},
+			b:    map[string]interface{}{},
+			want: true,
+		},
+		{
+			name: "map equal keys, equal non-nil value",
+			a:    map[string]interface{}{"1": true},
+			b:    map[string]interface{}{"1": true},
+			want: true,
+		},
+		{
+			name: "map equal keys, equal nil value",
+			a:    map[string]interface{}{"1": nil},
+			b:    map[string]interface{}{"1": nil},
+			want: true,
+		},
+
+		{
+			name: "map different value",
+			a:    map[string]interface{}{"1": true},
+			b:    map[string]interface{}{"1": false},
+			want: false,
+		},
+		{
+			name: "map different key, matching non-nil value",
+			a:    map[string]interface{}{"1": true},
+			b:    map[string]interface{}{"2": true},
+			want: false,
+		},
+		{
+			name: "map different key, matching nil value",
+			a:    map[string]interface{}{"1": nil},
+			b:    map[string]interface{}{"2": nil},
+			want: false,
+		},
+		{
+			name: "map different key, first nil value",
+			a:    map[string]interface{}{"1": true},
+			b:    map[string]interface{}{"2": nil},
+			want: false,
+		},
+		{
+			name: "map different key, second nil value",
+			a:    map[string]interface{}{"1": nil},
+			b:    map[string]interface{}{"2": true},
+			want: false,
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchesValue(tc.a, tc.b)
+			if got != tc.want {
+				t.Fatalf("want %v, got %v", tc.want, got)
+			}
+		})
 	}
 }
 
@@ -479,12 +545,12 @@ func benchmarkMatchesValueWithDeeplyNestedFields(depth int, b *testing.B) {
 func BenchmarkMatchesValue1(b *testing.B)  { benchmarkMatchesValueWithDeeplyNestedFields(1, b) }
 func BenchmarkMatchesValue2(b *testing.B)  { benchmarkMatchesValueWithDeeplyNestedFields(2, b) }
 func BenchmarkMatchesValue3(b *testing.B)  { benchmarkMatchesValueWithDeeplyNestedFields(3, b) }
-func BenchmarkMatchesValue4(b *testing.B) { benchmarkMatchesValueWithDeeplyNestedFields(4, b) }
-func BenchmarkMatchesValue5(b *testing.B) { benchmarkMatchesValueWithDeeplyNestedFields(5, b) }
-func BenchmarkMatchesValue6(b *testing.B) { benchmarkMatchesValueWithDeeplyNestedFields(6, b) }
-func BenchmarkMatchesValue7(b *testing.B) { benchmarkMatchesValueWithDeeplyNestedFields(7, b) }
-func BenchmarkMatchesValue8(b *testing.B) { benchmarkMatchesValueWithDeeplyNestedFields(8, b) }
-func BenchmarkMatchesValue9(b *testing.B) { benchmarkMatchesValueWithDeeplyNestedFields(9, b) }
+func BenchmarkMatchesValue4(b *testing.B)  { benchmarkMatchesValueWithDeeplyNestedFields(4, b) }
+func BenchmarkMatchesValue5(b *testing.B)  { benchmarkMatchesValueWithDeeplyNestedFields(5, b) }
+func BenchmarkMatchesValue6(b *testing.B)  { benchmarkMatchesValueWithDeeplyNestedFields(6, b) }
+func BenchmarkMatchesValue7(b *testing.B)  { benchmarkMatchesValueWithDeeplyNestedFields(7, b) }
+func BenchmarkMatchesValue8(b *testing.B)  { benchmarkMatchesValueWithDeeplyNestedFields(8, b) }
+func BenchmarkMatchesValue9(b *testing.B)  { benchmarkMatchesValueWithDeeplyNestedFields(9, b) }
 func BenchmarkMatchesValue10(b *testing.B) { benchmarkMatchesValueWithDeeplyNestedFields(10, b) }
 
 func TestCreateMergePatchComplexRemoveAll(t *testing.T) {
@@ -556,7 +622,7 @@ func TestMergePatchReplaceKeyNotEscaping(t *testing.T) {
 	pat := `{ "obj": { "title/escaped": "goodbye" } }`
 	exp := `{ "obj": { "title/escaped": "goodbye" } }`
 
-	res := mergePatch(doc, pat)
+	res := mergePatch(t, doc, pat)
 
 	if !compareJSON(exp, res) {
 		t.Fatalf("Key was not replaced")
@@ -581,6 +647,12 @@ func TestMergeMergePatches(t *testing.T) {
 			p1:           `{"del1": null}`,
 			p2:           `{"del2": null}`,
 			exp:          `{"del1": null, "del2": null}`,
+		},
+		{
+			demonstrates: "nulls are kept in complex objects",
+			p1:           `{}`,
+			p2:           `{"request":{"object":{"complex_object_array":["value1","value2","value3"],"complex_object_map":{"key1":"value1","key2":"value2","key3":"value3"},"simple_object_bool":false,"simple_object_float":-5.5,"simple_object_int":5,"simple_object_null":null,"simple_object_string":"example"}}}`,
+			exp:          `{"request":{"object":{"complex_object_array":["value1","value2","value3"],"complex_object_map":{"key1":"value1","key2":"value2","key3":"value3"},"simple_object_bool":false,"simple_object_float":-5.5,"simple_object_int":5,"simple_object_null":null,"simple_object_string":"example"}}}`,
 		},
 		{
 			demonstrates: "a key added then deleted is kept deleted",
